@@ -601,9 +601,9 @@ static int mcc_init_firmware_cache(int node, int *path)
     if (!planes || planes > INT32_MAX || !stride || (stride & 3))
         return -1;
 
-    /* Restrict this path to the observed J616s layout. */
-    if (t6041 && (chip_id != T6040 || board_id != 6 || reg_idx != 12 || count != 4 ||
-                  channels != 4 || planes != 4 || stride != 0x40000))
+    /* J614s must match the qualified J616s register layout and cache status. */
+    if (t6041 && (chip_id != T6040 || (board_id != 4 && board_id != 6) || reg_idx != 12 ||
+                  count != 4 || channels != 4 || planes != 4 || stride != 0x40000))
         return -1;
 
     mcc_count = count;
