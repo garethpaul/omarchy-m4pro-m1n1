@@ -82,17 +82,8 @@ void run_actions(void)
 #ifndef BRINGUP
     /* Use the M4 Pro's ADT-discovered USB controllers, not J700's KIS/ATC route.
      * The configurable window lets a host claim the proxy before ESP boot. */
-#ifdef J614S_NATIVE
-    j614s_native_note("USB_START");
-#endif
     usb_init();
-#ifdef J614S_NATIVE
-    j614s_native_note("USB_PHY_OK");
-#endif
     usb_iodev_init();
-#ifdef J614S_NATIVE
-    j614s_native_note("USB_READY");
-#endif
     usb_up = true;
 #ifdef J614S_NATIVE
     if (j614s_native_run() == 0)
@@ -244,13 +235,7 @@ static void j873g_run_proxy(void)
 
 static bool prepare_next_stage(void)
 {
-#ifdef J614S_NATIVE
-    j614s_native_note("PREPARE_ENTER");
-#endif
     if (usb_dwc3_shutdown_failed()) {
-#ifdef J614S_NATIVE
-        j614s_native_note("USB_ALREADY_UNSAFE");
-#endif
         return false;
     }
     if (chip_id != T8152 && !nvme_shutdown()) {
@@ -259,33 +244,18 @@ static bool prepare_next_stage(void)
         panic("NVMe handoff failed\n");
     }
     exception_shutdown();
-#ifdef J614S_NATIVE
-    j614s_native_note("NVME_QUIET");
-#endif
 #ifndef BRINGUP
     if (chip_id != T8152) {
-#ifdef J614S_NATIVE
-        j614s_native_note("USB_QUIESCE");
-#endif
         if (!usb_iodev_shutdown()) {
             /* Preserve the per-controller diagnostic label on failure. */
             return false;
         }
-#ifdef J614S_NATIVE
-        j614s_native_note("USB_QUIET");
-#endif
         display_shutdown(DCP_SLEEP_IF_EXTERNAL);
     }
 #ifdef USE_FB
     fb_shutdown(next_stage.restore_logo);
 #endif
-#ifdef J614S_NATIVE
-    j614s_native_note("MMU_OFF_START");
-#endif
     mmu_shutdown();
-#ifdef J614S_NATIVE
-    j614s_native_note("MMU_OFF");
-#endif
 #endif
 
     return true;
@@ -316,28 +286,15 @@ void m1n1_main(void)
         gxf_init();
     if (mcc_init() && (chip_id == T8140 || chip_id == T6040))
         panic("MCC initialization failed\n");
-#ifdef J614S_NATIVE
-    j614s_native_mark(0x3ff003ff);
-#endif
     mmu_init();
     aic_init();
-#ifdef J614S_NATIVE
-    j614s_native_mark(0x3ff7fc00);
-#endif
     smp_init();
-#ifdef J614S_NATIVE
-    j614s_native_mark(0x000fffff);
-    j614s_native_note("SMP_OK");
-#endif
 #endif
     wdt_disable();
 #ifdef J614S_NATIVE
     /* Preserve recovery throughout the remaining experimental initialization. */
-    j614s_native_mark(0x3ff00000);
     if (wdt_arm_seconds(60))
         panic("J614s candidate watchdog could not be rearmed\n");
-    j614s_native_mark(0x3ffffc00);
-    j614s_native_note("WATCHDOG_OK");
 #endif
 #ifdef J700_CDC_PROXY
     if (usb_cdc_arm_watchdog()) {
@@ -349,29 +306,18 @@ void m1n1_main(void)
 #ifndef BRINGUP
     if (pmgr_init() && chip_id == T8140)
         panic("T8140 PMGR initialization failed\n");
-#ifdef J614S_NATIVE
-    j614s_native_mark(0x000003ff);
-    j614s_native_note("PMGR_OK");
-#endif
 #ifdef USE_DEBUG_USB
     tps6598x_enable_debugusb();
 #endif
 #ifdef USE_FB
     display_init();
-#ifdef J614S_NATIVE
-    j614s_native_mark(0x3fffffff);
-    j614s_native_note("DISPLAY_OK");
-#endif
     // Kick DCP to sleep, so dodgy monitors which cause reconnect cycles don't cause us to lose the
     // framebuffer.
     display_shutdown(DCP_SLEEP_IF_EXTERNAL);
     // On idevice we need to always clear, because otherwise it looks scuffed on white devices
 #ifdef J614S_NATIVE
-    j614s_native_mark(0x3ff7fc00);
-    /* Keep direct diagnostic labels visible instead of restoring the console's
-     * buffered copy of the inherited pixels. This is diagnostic-only. */
+    /* Keep the inherited framebuffer unchanged during native handoff. */
     iodev_set_usage(IODEV_FB, 0);
-    j614s_native_note("CONSOLE_SKIPPED");
 #else
     fb_init(!is_mac);
     fb_display_logo();
@@ -384,13 +330,7 @@ void m1n1_main(void)
 #endif
 
     cpufreq_fixup();
-#ifdef J614S_NATIVE
-    j614s_native_note("CPUFREQ_OK");
-#endif
     sep_init();
-#ifdef J614S_NATIVE
-    j614s_native_note("SEP_OK");
-#endif
 #endif
 
     printf("Initialization complete.\n");
@@ -403,9 +343,6 @@ next_stage:
     }
 
     printf("Preparing to run next stage at %p...\n", next_stage.entry);
-#ifdef J614S_NATIVE
-    j614s_native_note("MAIN_HANDOFF");
-#endif
 
     if (!prepare_next_stage()) {
         next_stage.entry = NULL;
@@ -415,9 +352,6 @@ next_stage:
     }
 
     printf("Vectoring to next stage...\n");
-#ifdef J614S_NATIVE
-    j614s_native_note("LINUX_VECTOR");
-#endif
 
     next_stage.entry(next_stage.args[0], next_stage.args[1], next_stage.args[2], next_stage.args[3],
                      next_stage.args[4]);

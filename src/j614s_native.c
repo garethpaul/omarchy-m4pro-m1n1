@@ -18,45 +18,6 @@
 #define INITRD_OFF (32UL << 20)
 #define FDT_OFF (40UL << 20)
 
-/* [DEBUG-J614S-NATIVE] A direct diagnostic, independent of fb_init(). */
-void j614s_native_note(const char *text)
-{
-    extern u8 _binary_build_font_bin_start[];
-    const struct boot_video *v = &cur_boot_args.video;
-    if (v->base != 1124735713280UL || v->stride != 12096 || (v->depth & 0xff) != 30)
-        return;
-    size_t len = strlen(text);
-    if (len > 24)
-        return;
-    for (unsigned y = 0; y < 64; y++) {
-        for (unsigned x = 0; x < 768; x++) {
-            unsigned col = x / 32;
-            unsigned char ch = col < len ? text[col] : ' ';
-            unsigned off = (ch - 0x20) * 8 * 16 + (y / 4) * 8 + (x / 4) % 8;
-            u32 color = _binary_build_font_bin_start[off] > 127 ? 0x3fffffff : 0;
-            write32(v->base + (y + 96) * v->stride + (x + 32) * 4, color);
-        }
-        if (mmu_active())
-            dc_cvac_range((void *)(v->base + (y + 96) * v->stride + 32 * 4), 768 * 4);
-    }
-    sysop("dsb sy");
-}
-
-/* [DEBUG-J614S-NATIVE] Exact framebuffer lies outside both MCC carveouts. */
-void j614s_native_mark(unsigned color)
-{
-    if (cur_boot_args.video.base != 1124735713280UL ||
-        cur_boot_args.video.stride != 12096)
-        return;
-    for (unsigned y = 0; y < 64; y++)
-        for (unsigned x = 0; x < 128; x++)
-            write32(cur_boot_args.video.base + y * 12096 + x * 4, color);
-    if (mmu_active())
-        for (unsigned y = 0; y < 64; y++)
-            dc_cvac_range((void *)(cur_boot_args.video.base + y * 12096), 128 * 4);
-    sysop("dsb sy");
-}
-
 struct native_header {
     char magic[16];
     u32 version, image_size, initrd_size, fdt_size;
@@ -170,7 +131,7 @@ static int prepare_mtp_memory(void *dt, int node, u64 start, u64 end)
     return dapf_init("/arm-io/dart-mtp", 1);
 }
 
-static int clear_health_counter(void)
+static int require_zero_health_counter(void)
 {
     int path[8];
     int n = adt_path_offset_trace(adt, "/arm-io/nub-spmi0", path);
@@ -200,10 +161,11 @@ static int clear_health_counter(void)
     spmi_dev_t *dev = spmi_init("/arm-io/nub-spmi0");
     if (!dev)
         return -1;
-    u8 value, zero = 0;
+    u8 value;
     int ret = spmi_ext_read_long(dev, 14, 0xf802, &value, 1);
+    /* Refuse a nonzero health byte; this handoff must never clear PMU state. */
     if (!ret && value)
-        ret = spmi_ext_write_long(dev, 14, 0xf802, &zero, 1);
+        ret = -1;
     if (!ret)
         ret = spmi_ext_read_long(dev, 14, 0xf802, &value, 1);
     if (!ret && (value || read32(base) != 0x1000100 || (read32(base + 0x80) & BIT(27))))
@@ -214,7 +176,6 @@ static int clear_health_counter(void)
 
 int j614s_native_run(void)
 {
-    j614s_native_note("PAYLOAD_START");
     struct native_header hdr;
     memcpy(&hdr, _payload_start, sizeof(hdr));
     if (memcmp(hdr.magic, "J614S_NATIVE_V1\0", 16) || hdr.version != 1 || hdr.reserved)
@@ -242,14 +203,14 @@ int j614s_native_run(void)
         fdt_node_check_compatible(src_fdt, 0, "apple,j614s"))
         return -1;
     u64 image_header[3];
-    j614s_native_note("CRC_OK");
     memcpy(image_header, src_image, sizeof(image_header));
     if (image_header[1] || image_header[2] < hdr.image_size || image_header[2] >= INITRD_OFF)
         return -1;
     /* All malloc/SPMI work precedes the irreversible non-freeing RAM allocation. */
-    if (wdt_arm_seconds(60) || clear_health_counter())
+    if (require_zero_health_counter())
         return -1;
-    j614s_native_note("PMU_OK");
+    if (wdt_arm_seconds(60))
+        return -1;
     u64 old_heap = heapblock_high_water(), start = ALIGN_2M(old_heap);
     u64 ram_end = cur_boot_args.phys_base + cur_boot_args.mem_size;
     if (ram_end < cur_boot_args.phys_base || old_heap < cur_boot_args.phys_base ||
@@ -260,14 +221,12 @@ int j614s_native_run(void)
         return -1;
     if (heapblock_alloc(end - old_heap) != (void *)old_heap)
         return -1;
-    j614s_native_note("RAM_OWNED");
     void *image = (void *)start, *initrd = (void *)(start + INITRD_OFF);
     void *dt = (void *)(start + FDT_OFF);
     memset(image, 0, image_header[2]);
     memcpy(image, src_image, hdr.image_size);
     memcpy(initrd, src_initrd, hdr.initrd_size);
     memcpy(dt, src_fdt, hdr.fdt_size);
-    j614s_native_note("COPY_DONE");
     int memory = fdt_node_offset_by_prop_value(dt, -1, "device_type", "memory", 7);
     int chosen = fdt_path_offset(dt, "/chosen");
     int reserved = fdt_path_offset(dt, "/reserved-memory");
@@ -298,7 +257,6 @@ int j614s_native_run(void)
     }
     if (patched != 3 && patched != 7)
         return -1;
-    j614s_native_note("FDT_DONE");
     dc_civac_range(image, image_header[2]);
     ic_ivau_range(image, image_header[2]);
     dc_civac_range(initrd, hdr.initrd_size);
@@ -309,8 +267,6 @@ int j614s_native_run(void)
     for (unsigned i = 1; i < ARRAY_SIZE(next_stage.args); i++)
         next_stage.args[i] = 0;
     next_stage.restore_logo = true;
-    j614s_native_note("HANDOFF_READY");
     printf("J614s native payload qualified: 4 GiB at %p, one CPU\n", image);
-    j614s_native_note("PAYLOAD_RETURN");
     return 0;
 }

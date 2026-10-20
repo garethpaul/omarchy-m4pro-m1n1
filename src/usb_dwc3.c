@@ -28,7 +28,6 @@
 #include "usb_types.h"
 #include "utils.h"
 #ifdef J614S_NATIVE
-#include "j614s_native.h"
 #endif
 
 #define MAX_ENDPOINTS     16
@@ -179,23 +178,6 @@ typedef struct dwc3_dev {
 #endif
 
 } dwc3_dev_t;
-
-#ifdef J614S_NATIVE
-/* [DEBUG-J614S-NATIVE] Direct display diagnostics survive a USB shutdown fault. */
-static void native_usb_step(dwc3_dev_t *dev, const char *phase)
-{
-    unsigned port = 9;
-    if (dev->regs >= 0x382280000UL && dev->regs <= 0x392280000UL &&
-        !((dev->regs - 0x382280000UL) % 0x8000000UL))
-        port = (dev->regs - 0x382280000UL) / 0x8000000UL;
-    char text[24];
-    snprintf(text, sizeof(text), "USB%u_%s", port, phase);
-    j614s_native_note(text);
-}
-#define NATIVE_USB_STEP(dev, phase) native_usb_step(dev, phase)
-#else
-#define NATIVE_USB_STEP(dev, phase) do { } while (0)
-#endif
 
 /* An uncertain constructor has no iodev yet; retain its owner explicitly. */
 static dwc3_dev_t *usb_retained_dev;
@@ -1968,18 +1950,13 @@ bool usb_dwc3_shutdown(dwc3_dev_t *dev)
     if (!dev)
         return true;
     if (usb_shutdown_failed || dev->failed || dev->dma_unsafe) {
-        NATIVE_USB_STEP(dev, "BAD_STATE");
         goto unsafe;
     }
-    NATIVE_USB_STEP(dev, "STOP_BEGIN");
 #ifdef J614S_NATIVE
     /* Complete control requests before entering the no-rearm shutdown path. */
-    NATIVE_USB_STEP(dev, "CONTROL_DRAIN");
     if (usb_dwc3_quiet_control(dev)) {
-        NATIVE_USB_STEP(dev, "CONTROL_BUSY");
         goto unsafe;
     }
-    NATIVE_USB_STEP(dev, "CONTROL_QUIET");
 #endif
     dev->shutting_down = true;
     for (int i = 0; i < CDC_ACM_PIPE_MAX; i++)
@@ -1989,18 +1966,12 @@ bool usb_dwc3_shutdown(dwc3_dev_t *dev)
     for (int i = 0; i < MAX_ENDPOINTS; ++i) {
         if (!dev->endpoints[i].xfer_in_progress)
             continue;
-#ifdef J614S_NATIVE
-        char phase[16];
-        snprintf(phase, sizeof(phase), "EP%d_END", i);
-        NATIVE_USB_STEP(dev, phase);
-#endif
 
         if (usb_dwc3_end_transfer(dev, i))
             goto unsafe;
     }
 
     /* disable events and all endpoints and stop the device controller */
-    NATIVE_USB_STEP(dev, "HALT");
     write32(dev->regs + DWC3_DEVTEN, 0);
     write32(dev->regs + DWC3_DALEPENA, 0);
     clear32(dev->regs + DWC3_DCTL, DWC3_DCTL_RUN_STOP);
@@ -2008,53 +1979,36 @@ bool usb_dwc3_shutdown(dwc3_dev_t *dev)
     /* wait until the controller is shut down */
     if (poll32(dev->regs + DWC3_DSTS, DWC3_DSTS_DEVCTRLHLT, DWC3_DSTS_DEVCTRLHLT, 1000)) {
 #ifdef J614S_NATIVE
-        /* [DEBUG-J614S-NATIVE] Record pending events before servicing them. */
-        char pending[20];
-        snprintf(pending, sizeof(pending), "E%08xC%08x",
-                 read32(dev->regs + DWC3_GEVNTCOUNT(0)), read32(dev->regs + DWC3_DCTL));
-        NATIVE_USB_STEP(dev, pending);
         if (usb_dwc3_wait_halted(dev, 4000000)) {
-            char phase[20];
-            snprintf(phase, sizeof(phase), "H%08xP%08x",
-                     read32(dev->regs + DWC3_DSTS), read32(dev->regs + DWC3_GUSB2PHYCFG(0)));
-            NATIVE_USB_STEP(dev, phase);
             goto unsafe;
         }
-        NATIVE_USB_STEP(dev, "HALTED_DRAIN");
 #else
         goto unsafe;
 #endif
     }
 
     /* reset the device side of the controller just to be safe */
-    NATIVE_USB_STEP(dev, "RESET");
     set32(dev->regs + DWC3_DCTL, DWC3_DCTL_CSFTRST);
     if (poll32(dev->regs + DWC3_DCTL, DWC3_DCTL_CSFTRST, 0, 1000))
         goto unsafe;
 
     /* unmap and free dma buffers */
-    NATIVE_USB_STEP(dev, "UNMAP_TRB");
     dart_unmap(dev->dart, TRB_BUFFER_IOVA, TRB_BUFFER_SIZE);
     if (dart_has_failed(dev->dart))
         goto unsafe;
-    NATIVE_USB_STEP(dev, "UNMAP_XFER");
     dart_unmap(dev->dart, XFER_BUFFER_IOVA, XFER_BUFFER_SIZE);
     if (dart_has_failed(dev->dart))
         goto unsafe;
-    NATIVE_USB_STEP(dev, "UNMAP_SCRATCH");
     dart_unmap(dev->dart, SCRATCHPAD_IOVA, max(DWC3_SCRATCHPAD_SIZE, SZ_16K));
     if (dart_has_failed(dev->dart))
         goto unsafe;
-    NATIVE_USB_STEP(dev, "UNMAP_EVENT");
     dart_unmap(dev->dart, EVENT_BUFFER_IOVA, max(DWC3_EVENT_BUFFERS_SIZE, SZ_16K));
     if (dart_has_failed(dev->dart))
         goto unsafe;
 
-    NATIVE_USB_STEP(dev, "DART_STOP");
     if (!dart_shutdown_checked(dev->dart))
         goto unsafe;
 
-    NATIVE_USB_STEP(dev, "FREE");
     free(dev->evtbuffer);
     free(dev->scratchpad);
     free(dev->xferbuffer);
