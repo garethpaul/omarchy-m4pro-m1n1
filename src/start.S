@@ -2,7 +2,6 @@
 
 #include "smp_asm.h"
 #include "soc.h"
-#include "../build/build_cfg.h"
 
 #define UTRSTAT 0x010
 #define UTXH 0x020
@@ -69,11 +68,6 @@ _vectors_start:
 .type _start, @function
 _start:
     mov x19, x0
-#ifdef J614S_NATIVE
-    /* [DEBUG-J614S-NATIVE] Exact captured framebuffer; no stack required. */
-    ldr w0, =0x3ff00000
-    bl j614s_entry_mark
-#endif
 
     mov w0, 'm'
     bl debug_putc
@@ -96,10 +90,6 @@ _start:
     adrp x2, _rela_end
     add x2, x2, :lo12:_rela_end
     bl apply_rela
-#ifdef J614S_NATIVE
-    ldr w0, =0x3ffffc00
-    bl j614s_entry_mark
-#endif
 
     mov w0, '1'
     bl debug_putc
@@ -117,29 +107,6 @@ _start:
     mov x1, x20
     bl _start_c
     b .
-
-#ifdef J614S_NATIVE
-j614s_entry_mark:
-    ldr x9, [x19, #40]
-    ldr x10, =1124735713280
-    cmp x9, x10
-    b.ne 9f
-    mov x11, #64
-    mov x14, #12096
-7:
-    mov x12, x9
-    mov x13, #128
-8:
-    str w0, [x12], #4
-    subs x13, x13, #1
-    b.ne 8b
-    add x9, x9, x14
-    subs x11, x11, #1
-    b.ne 7b
-    dsb sy
-9:
-    ret
-#endif
 
 start_el3:
     bl exception_initialize

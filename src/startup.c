@@ -11,7 +11,6 @@
 #include "uart.h"
 #include "utils.h"
 #include "xnuboot.h"
-#include "j614s_native.h"
 #include "../build/build_cfg.h"
 
 u64 boot_args_addr;
@@ -169,9 +168,6 @@ void _start_c(void *boot_args, void *base)
     memset64(_bss_start, 0, _bss_end - _bss_start);
     boot_args_addr = (u64)boot_args;
     memcpy(&cur_boot_args, boot_args, sizeof(cur_boot_args));
-#ifdef J614S_NATIVE
-    j614s_native_mark(0x000003ff);
-#endif
 
     adt =
         (void *)(((u64)cur_boot_args.devtree) - cur_boot_args.virt_base + cur_boot_args.phys_base);
@@ -209,9 +205,6 @@ void _start_c(void *boot_args, void *base)
 
     printf("CPU init (MIDR: 0x%lx smp_id:0x%x)...\n", mrs(MIDR_EL1), smp_id());
     init_cpu();
-#ifdef J614S_NATIVE
-    j614s_native_mark(0x000ffc00);
-#endif
     printf("\n");
 
     printf("boot_args at %p\n", boot_args);
