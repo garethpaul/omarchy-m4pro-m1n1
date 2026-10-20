@@ -13,6 +13,8 @@
 #include "string.h"
 #include "utils.h"
 #include "xnuboot.h"
+#include "../build/build_cfg.h"
+#include "j614s_native.h"
 
 #define PAGE_SIZE       get_page_size()
 #define CACHE_LINE_SIZE 64
@@ -695,8 +697,17 @@ void mmu_init(void)
         panic("MMU: invalid T8140 firmware RO range\n");
 
     mmu_init_pagetables();
+#ifdef J614S_NATIVE
+    j614s_native_mark(0x3ff00000);
+#endif
     mmu_add_default_mappings();
+#ifdef J614S_NATIVE
+    j614s_native_mark(0x3ffffc00);
+#endif
     mmu_configure();
+#ifdef J614S_NATIVE
+    j614s_native_mark(0x000003ff);
+#endif
     if (cpu_features->mmu_sprr)
         mmu_init_sprr();
 
@@ -712,7 +723,13 @@ void mmu_init(void)
     sctlr |= SCTLR_I | SCTLR_C | SCTLR_M | SCTLR_SPAN;
 
     printf("MMU: SCTLR_EL1: %lx -> %lx\n", mrs(SCTLR_EL1), sctlr);
+#ifdef J614S_NATIVE
+    j614s_native_mark(0x000ffc00);
+#endif
     write_sctlr(sctlr);
+#ifdef J614S_NATIVE
+    j614s_native_mark(0x3fffffff);
+#endif
     printf("MMU: running with MMU and caches enabled!\n");
 }
 

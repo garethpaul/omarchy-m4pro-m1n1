@@ -103,6 +103,13 @@ endif
 CFG += T6040_STAGE1_CDC
 endif
 
+ifeq ($(J614S_NATIVE),1)
+ifneq ($(T6040_STAGE1_CDC),1)
+$(error J614S_NATIVE requires T6040_STAGE1_CDC=1)
+endif
+CFG += J614S_NATIVE
+endif
+
 ifeq ($(J700_ESP_STAGE2),1)
 ifneq ($(CHAINLOADING),1)
 $(error J700_ESP_STAGE2 requires CHAINLOADING=1 for boot=)
@@ -230,6 +237,7 @@ OBJECTS := \
 	kboot.o kboot_atc.o \
 	kboot_t6020_compat.o \
 	main.o \
+	j614s_native.o \
 	mitigations.o \
 	mcc.o \
 	memory.o memory_asm.o \
