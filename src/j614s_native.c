@@ -131,7 +131,7 @@ static int prepare_mtp_memory(void *dt, int node, u64 start, u64 end)
     return dapf_init("/arm-io/dart-mtp", 1);
 }
 
-static int clear_health_counter(void)
+static int require_zero_health_counter(void)
 {
     int path[8];
     int n = adt_path_offset_trace(adt, "/arm-io/nub-spmi0", path);
@@ -161,10 +161,11 @@ static int clear_health_counter(void)
     spmi_dev_t *dev = spmi_init("/arm-io/nub-spmi0");
     if (!dev)
         return -1;
-    u8 value, zero = 0;
+    u8 value;
     int ret = spmi_ext_read_long(dev, 14, 0xf802, &value, 1);
+    /* Refuse a nonzero health byte; this handoff must never clear PMU state. */
     if (!ret && value)
-        ret = spmi_ext_write_long(dev, 14, 0xf802, &zero, 1);
+        ret = -1;
     if (!ret)
         ret = spmi_ext_read_long(dev, 14, 0xf802, &value, 1);
     if (!ret && (value || read32(base) != 0x1000100 || (read32(base + 0x80) & BIT(27))))
@@ -206,7 +207,9 @@ int j614s_native_run(void)
     if (image_header[1] || image_header[2] < hdr.image_size || image_header[2] >= INITRD_OFF)
         return -1;
     /* All malloc/SPMI work precedes the irreversible non-freeing RAM allocation. */
-    if (wdt_arm_seconds(60) || clear_health_counter())
+    if (require_zero_health_counter())
+        return -1;
+    if (wdt_arm_seconds(60))
         return -1;
     u64 old_heap = heapblock_high_water(), start = ALIGN_2M(old_heap);
     u64 ram_end = cur_boot_args.phys_base + cur_boot_args.mem_size;
